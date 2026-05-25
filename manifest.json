@@ -1,0 +1,14 @@
+{
+  "name": "NUMA HRIS",
+  "short_name": "NUMA",
+  "description": "Philippine MSME HR Information System",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111827",
+  "theme_color": "#1D4ED8",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable any" }
+  ]
+}

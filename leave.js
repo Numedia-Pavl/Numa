@@ -1,0 +1,104 @@
+'use strict';
+const express  = require('express');
+const supabase = require('../utils/supabase');
+const { authenticate, authorize } = require('../middleware/auth');
+
+const router = express.Router();
+router.use(authenticate);
+
+// ── GET /api/leave — role-filtered list ──────────────────
+router.get('/', async (req, res) => {
+  try {
+    const roles = req.user.roles || [];
+    const isHR  = ['hr','admin','hr_manager'].some(r => roles.includes(r));
+    const isMgr = roles.includes('manager') || roles.includes('supervisor');
+
+    let query = supabase
+      .from('leave_requests')
+      .select('*, employee:employees(first_name,last_name,employee_id,position,department:departments(name))')
+      .order('created_at', { ascending: false });
+
+    if (isHR)       { /* see all */ }
+    else if (isMgr) {
+      // Supervisors see only direct reports
+      const { data: directs } = await supabase
+        .from('employees').select('id').eq('supervisor_id', req.user.employee_id);
+      const ids = (directs || []).map(d => d.id);
+      ids.push(req.user.employee_id); // also their own
+      query = query.in('employee_id', ids);
+    } else {
+      query = query.eq('employee_id', req.user.employee_id);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json({ success: true, leave_requests: data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── GET /api/leave/balance — own leave balance ───────────
+router.get('/balance', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('leave_balances')
+      .select('*')
+      .eq('employee_id', req.user.employee_id)
+      .single();
+    res.json({ success: true, balance: data || { sick_leave: 15, vacation_leave: 15, emergency_leave: 3 } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── POST /api/leave — file a request ─────────────────────
+router.post('/', async (req, res) => {
+  const { leave_type, start_date, end_date, reason } = req.body;
+  if (!leave_type || !start_date || !end_date)
+    return res.status(400).json({ success: false, message: 'leave_type, start_date, end_date required' });
+
+  try {
+    const { data, error } = await supabase.from('leave_requests').insert({
+      employee_id: req.user.employee_id,
+      leave_type, start_date, end_date, reason,
+      status: 'pending'
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json({ success: true, leave_request: data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+// ── PUT /api/leave/:id/approve — supervisor/HR approves ──
+router.put('/:id/approve', authorize('hr', 'admin', 'hr_manager', 'manager', 'supervisor'), async (req, res) => {
+  const { remarks } = req.body;
+  try {
+    const { data, error } = await supabase
+      .from('leave_requests')
+      .update({ status: 'approved', remarks, approved_by: req.user.id, approved_at: new Date().toISOString() })
+      .eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json({ success: true, leave_request: data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── PUT /api/leave/:id/reject — supervisor/HR rejects ────
+router.put('/:id/reject', authorize('hr', 'admin', 'hr_manager', 'manager', 'supervisor'), async (req, res) => {
+  const { remarks } = req.body;
+  try {
+    const { data, error } = await supabase
+      .from('leave_requests')
+      .update({ status: 'rejected', remarks, approved_by: req.user.id, approved_at: new Date().toISOString() })
+      .eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json({ success: true, leave_request: data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+module.exports = router;
